@@ -3,9 +3,6 @@ Writeup for TryHackMe ThreatHunting: Foothold - analyzing Initial Access, Execut
 
 By Ramyar Daneshgar 
 
-### **TryHackMe: Threat Hunting - Foothold Write-Up**  
-**By Ramyar Daneshgar**
-
 ---
 
 This lab focused on analyzing indicators of compromise (IoCs) to identify an adversary's activities during the **Initial Access**, **Execution**, **Defense Evasion**, **Persistence**, and **Command and Control (C2)** phases of an attack. This exercise demonstrates how to detect, analyze, and mitigate potential threats using **Kibana** and **ELK stack** for threat hunting.
