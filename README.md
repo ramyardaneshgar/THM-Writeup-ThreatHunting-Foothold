@@ -5,176 +5,174 @@ By Ramyar Daneshgar
 
 ---
 
-This lab focused on analyzing indicators of compromise (IoCs) to identify an adversary's activities during the **Initial Access**, **Execution**, **Defense Evasion**, **Persistence**, and **Command and Control (C2)** phases of an attack. This exercise demonstrates how to detect, analyze, and mitigate potential threats using **Kibana** and **ELK stack** for threat hunting.
+This writeup details my step-by-step threat-hunting process in detecting and analyzing adversarial activities across the **cyber kill chain**. Using Kibana and the Elastic Stack (ELK), I investigated logs to identify and mitigate Indicators of Compromise (IoCs). Each phase follows structured cybersecurity methodologies to uncover malicious behaviors while emphasizing how attackers bypass defenses.
 
 ---
 
-### **Setup**
-The environment provided included:
-1. **Virtual Machines (VMs)**:
-   - **JUMPHOST**: An Ubuntu bastion server.
-   - **WEB01**: An external-facing web server.
-   - **WKSTN-1 and WKSTN-2**: Windows workstations.
-   - **DC01**: A domain controller.
+## **Environment Setup**
+The lab setup included:
 
-2. **ELK Stack**:
-   - **Indices**:
+1. **Host Systems:**
+   - **JUMPHOST**: Ubuntu bastion server facilitating internal network access.
+   - **WEB01**: Publicly accessible Ubuntu web server.
+   - **WKSTN-1** and **WKSTN-2**: Employee Windows 10 workstations.
+   - **DC01**: Windows Server 2019 domain controller.
+
+2. **ELK Stack:**
+   - Indices:
      - `filebeat-*`: Logs from Linux hosts.
-     - `winlogbeat-*`: Logs from Windows machines.
+     - `winlogbeat-*`: Windows event logs.
      - `packetbeat-*`: Network traffic logs.
 
-3. **Credentials**:  
-   - URL: `http://<MACHINE_IP>`  
-   - Username: `elastic`  
-   - Password: `elastic`  
-
-The objective was to correlate logs and detect anomalous activities, following the **MITRE ATT&CK framework**, to identify the adversary's techniques and tactics.
+3. **Credentials for Analysis**:
+   - URL: `http://<MACHINE_IP>`
+   - Username: `elastic`
+   - Password: `elastic`
 
 ---
 
-## **Key Phases of the Investigation**
+## **Investigation Breakdown by MITRE Tactics**
 
 ---
 
 ### **1. Initial Access (MITRE: TA0001)**
-**Objective**: Identify how the adversary gained initial access to the network.
+
+#### **Objective:** Identify the adversary's methods of gaining entry into the network.
 
 #### **Scenario 1: Brute-Force via SSH**
-1. **Kibana Query**:  
-   Using the `filebeat-*` index, I searched for failed SSH authentication attempts:
+1. **Reconnaissance**: Using the `filebeat-*` index, I analyzed authentication logs on the **JUMPHOST** server:
    ```kql
    host.name: jumphost AND event.category: authentication AND system.auth.ssh.event: Failed
    ```
-   - Result: **500+ failed authentication attempts** from two IPs.
-   
-2. **Successful Authentication**:  
-   Narrowed the query to find accepted SSH authentication from these IPs:
+   - **Finding**: Over 500 failed SSH login attempts from two IP addresses.
+
+2. **Successful Authentication**: Narrowing the query to find a successful login:
    ```kql
    host.name: jumphost AND event.category: authentication AND system.auth.ssh.event: Accepted AND source.ip: (167.71.198.43 OR 218.92.0.115)
    ```
-   - Result: The adversary accessed the **JUMPHOST server** on **Jul 3, 2023 @ 14:14:09.000** using the **dev** account.
+   - **Outcome**: The attacker successfully accessed the **JUMPHOST** server on **Jul 3, 2023 @ 14:14:09.000**, using the **dev** account.
 
 ---
 
 #### **Scenario 2: Remote Code Execution on WEB01**
-1. **Kibana Query**:  
-   Using the `packetbeat-*` index, I investigated HTTP requests to `WEB01`:
+1. **Network Analysis**: Using the `packetbeat-*` index, I monitored HTTP traffic to the **WEB01** server:
    ```kql
    host.name: web01 AND network.protocol: http AND destination.port: 80
    ```
-   - Result: The adversary used **Gobuster** to enumerate directories.
+   - **Finding**: The attacker conducted directory enumeration using **Gobuster**, generating multiple 404 responses.
 
-2. **Exploitation**:  
-   After discovering `/gila`, the attacker injected malicious PHP code using the **User-Agent** field to achieve remote code execution. The adversary accessed sensitive files such as `config.php`.
+2. **Exploit Discovery**: Querying for valid HTTP responses:
+   ```kql
+   host.name: web01 AND network.protocol: http AND destination.port: 80 AND http.response.status_code: (200 OR 301 OR 302)
+   ```
+   - **Outcome**: After identifying the `/gila` directory, the attacker injected PHP code via the **User-Agent** header to execute remote commands and accessed sensitive files, including `config.php`.
 
 ---
 
 ### **2. Execution (MITRE: TA0002)**
-**Objective**: Trace the execution of malicious commands on compromised systems.
 
-#### **Scenario 1: Command-Line Tools**
-- Investigated events from `powershell.exe` and `cmd.exe`:
-  ```kql
-  host.name: WKSTN-* AND winlog.event_id: 1 AND process.name: (cmd.exe OR powershell.exe)
-  ```
-  - Observed:  
-    - `cmd.exe` was spawned by `C:\Windows\Temp\installer.exe`.
-    - The first command executed was `whoami /priv`.
+#### **Objective:** Uncover how malicious commands were executed post-initial access.
 
-#### **Scenario 2: Living Off the Land Binaries (LOLBAS)**
-- Explored binaries like `certutil.exe`, `mshta.exe`, and `regsvr32.exe`:
-  ```kql
-  host.name: WKSTN-* AND winlog.event_id: (1 OR 3) AND process.name: (mshta.exe OR certutil.exe OR regsvr32.exe)
-  ```
-  - Observed:  
-    - `certutil.exe` downloaded `installer.exe`.
-    - `mshta.exe` executed an encoded PowerShell command.
+#### **Scenario 1: Abuse of Command-Line Tools**
+1. **Process Investigation**: Using the `winlogbeat-*` index, I focused on `powershell.exe` and `cmd.exe` executions:
+   ```kql
+   host.name: WKSTN-* AND winlog.event_id: 1 AND process.name: (cmd.exe OR powershell.exe)
+   ```
+   - **Finding**: 
+     - `cmd.exe` was spawned by `C:\Windows\Temp\installer.exe`.
+     - The first command executed was `whoami /priv`.
+
+#### **Scenario 2: Living Off the Land (LOLBAS)**
+1. **LOLBAS Investigation**: Examined suspicious binaries (`certutil.exe`, `mshta.exe`, `regsvr32.exe`):
+   ```kql
+   host.name: WKSTN-* AND winlog.event_id: (1 OR 3) AND process.name: (mshta.exe OR certutil.exe OR regsvr32.exe)
+   ```
+   - **Finding**: 
+     - `certutil.exe` downloaded the payload `installer.exe`.
+     - `mshta.exe` executed encoded PowerShell commands.
 
 ---
 
 ### **3. Defense Evasion (MITRE: TA0005)**
-**Objective**: Identify techniques used to avoid detection.
+
+#### **Objective:** Analyze techniques used to avoid detection.
 
 #### **Scenario 1: Disabling Security Software**
-- Query for disabling Windows Defender:
-  ```kql
-  host.name: WKSTN-* AND (*DisableRealtimeMonitoring* OR *RemoveDefinitions*)
-  ```
-  - Observed:
-    - `Set-MpPreference` disabled real-time monitoring.
-    - `MpCmdRun.exe` removed Defender definitions.
+1. **Defender Tampering**: Searched for commands disabling Windows Defender:
+   ```kql
+   host.name: WKSTN-* AND (*DisableRealtimeMonitoring* OR *RemoveDefinitions*)
+   ```
+   - **Finding**: 
+     - `Set-MpPreference` disabled real-time monitoring.
+     - `MpCmdRun.exe` removed Defender definitions.
 
 #### **Scenario 2: Log Deletion**
-- Query for event logs cleared:
-  ```kql
-  host.name: WKSTN-* AND winlog.event_id: 1102
-  ```
-  - Observed:
-    - Logs were cleared on `WKSTN-1`.
+1. **Log Analysis**: Queried for event logs cleared:
+   ```kql
+   host.name: WKSTN-* AND winlog.event_id: 1102
+   ```
+   - **Outcome**: Logs on **WKSTN-1** were cleared to hinder detection.
 
 ---
 
 ### **4. Persistence (MITRE: TA0003)**
-**Objective**: Track methods used to maintain long-term access.
 
-#### **Scenario 1: Scheduled Task Creation**
-- Query for task creation:
-  ```kql
-  host.name: WKSTN-* AND winlog.event_id: 4698
-  ```
-  - Observed:
-    - A malicious task named **Windows Update** was scheduled to run every minute, executing commands tied to `installer.exe`.
+#### **Objective:** Identify mechanisms ensuring continued adversary access.
 
-#### **Scenario 2: Registry Modification**
-- Query for registry changes:
-  ```kql
-  host.name: WKSTN-* AND winlog.event_id: 13 AND registry.path: (*CurrentVersion\\Run* OR *CurrentVersion\\Explorer\\Shell*)
-  ```
-  - Observed:
-    - A key pointing to `C:\Windows\Temp\installer.exe` was created in the `RunOnce` registry path.
+#### **Scenario 1: Scheduled Tasks**
+1. **Task Investigation**: Queried for scheduled task creation:
+   ```kql
+   host.name: WKSTN-* AND winlog.event_id: 4698
+   ```
+   - **Finding**: A malicious task named **Windows Update** was scheduled to execute PowerShell commands every minute.
+
+#### **Scenario 2: Registry Modifications**
+1. **Registry Analysis**: Focused on autorun registry keys:
+   ```kql
+   host.name: WKSTN-* AND winlog.event_id: 13 AND registry.path: (*CurrentVersion\\Run* OR *CurrentVersion\\Explorer\\Shell*)
+   ```
+   - **Outcome**: A registry key was created to execute `C:\Windows\Temp\installer.exe` on startup.
 
 ---
 
 ### **5. Command and Control (MITRE: TA0011)**
-**Objective**: Uncover communication channels between the adversary and compromised systems.
+
+#### **Objective:** Uncover methods used for ongoing communication with compromised hosts.
 
 #### **Scenario 1: DNS-Based C2**
-- Query for unusual DNS requests:
-  ```kql
-  network.protocol: dns AND NOT dns.question.name: *arpa
-  ```
-  - Observed:
-    - `167.71.198.43` queried **golge.xyz** over 2000 times using TXT and CNAME records.
+1. **DNS Query Analysis**:
+   ```kql
+   network.protocol: dns AND NOT dns.question.name: *arpa
+   ```
+   - **Finding**: Over 2000 DNS queries to **golge.xyz** from `167.71.198.43`, using subdomains for data exchange.
 
 #### **Scenario 2: Discord C2**
-- Query for connections to Discord:
-  ```kql
-  host.name: WKSTN-1* AND *discord.gg*
-  ```
-  - Observed:
-    - `installer.exe` initiated communication with **discord.gg**.
+1. **Cloud Application Traffic**:
+   ```kql
+   host.name: WKSTN-1* AND *discord.gg*
+   ```
+   - **Finding**: `installer.exe` communicated with Discord for C2.
 
 #### **Scenario 3: Encrypted HTTP Traffic**
-- Query for outbound HTTP traffic:
-  ```kql
-  network.protocol: http AND network.direction: egress
-  ```
-  - Observed:
-    - High-volume GET requests to **cdn.golge.xyz** from both `WKSTN-1` and `WKSTN-2`.
+1. **HTTP Traffic Analysis**:
+   ```kql
+   network.protocol: http AND network.direction: egress
+   ```
+   - **Outcome**: Frequent GET requests to **cdn.golge.xyz** indicated a custom C2 server.
 
 ---
 
-### **Conclusion**
-Through systematic threat hunting, I successfully identified the adversary's tactics, techniques, and procedures (TTPs) across the cyber kill chain:
+### **Lessons Learned**
+1. **Key Indicators**:
+   - Brute-force attempts and directory enumeration highlight the importance of intrusion detection systems.
+   - Misuse of built-in tools like PowerShell and certutil underscores the need for monitoring LOLBAS.
 
-1. **Key Findings**:
-   - Initial access was achieved via SSH brute force and remote code execution.
-   - Execution relied on command-line tools and LOLBAS.
-   - Defense evasion included disabling Windows Defender and clearing event logs.
-   - Persistence was maintained via scheduled tasks and registry modifications.
-   - C2 was established over DNS, Discord, and encrypted HTTP.
+2. **Defensive Measures**:
+   - Enable endpoint detection and response (EDR) for command-line activities.
+   - Implement DNS filtering to detect suspicious subdomains.
+   - Regularly audit scheduled tasks and registry keys for unauthorized changes.
 
-2. **Lessons Learned**:
-   - **Visibility**: Comprehensive logging across endpoints, networks, and applications is critical.
-   - **Anomaly Detection**: Patterns such as excessive DNS queries or encrypted HTTP traffic can indicate malicious activity.
-   - **Defense-in-Depth**: Combine SIEM solutions, endpoint detection and response (EDR), and regular security audits.
+3. **Proactive Threat Hunting**:
+   - Leverage SIEM tools like ELK for log correlation.
+   - Prioritize high-value systems (e.g., JUMPHOST, DC01) for anomaly detection.
+   - Adopt a defense-in-depth strategy to minimize attack vectors.
