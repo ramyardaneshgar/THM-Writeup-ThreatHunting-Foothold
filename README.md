@@ -1,5 +1,5 @@
-# THM-Writeup-ThreatHunting-Foothold
-Writeup for TryHackMe ThreatHunting: Foothold - analyzing Initial Access, Execution, Defense Evasion, Persistence, and C2 tactics using ELK and MITRE ATT&amp;CK.
+# ThreatHunting-Foothold
+ThreatHunting: Foothold - analyzing Initial Access, Execution, Defense Evasion, Persistence, and C2 tactics using ELK and MITRE ATT&amp;CK.
 
 By Ramyar Daneshgar 
 
@@ -174,5 +174,5 @@ The lab setup included:
 
 3. **Proactive Threat Hunting**:
    - Leverage SIEM tools like ELK for log correlation.
-   - Prioritize high-value systems (e.g., JUMPHOST, DC01) for anomaly detection.
+   - Prioritize high-value systems (JUMPHOST, DC01) for anomaly detection.
    - Adopt a defense-in-depth strategy to minimize attack vectors.
